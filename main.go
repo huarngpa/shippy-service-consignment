@@ -3,31 +3,26 @@ package main
 import (
 	"context"
 	"log"
-	"net"
 	"sync"
 
-	pb "github.com/huarngpa/shippy-service-consignment/proto/consignment"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
-)
-
-const (
-	port = ":50051"
+	shippy "github.com/huarngpa/shippy-service-consignment/proto/consignment"
+	"github.com/micro/go-micro"
+	"github.com/micro/go-micro/service/grpc"
 )
 
 type repository interface {
-	Create(*pb.Consignment) (*pb.Consignment, error)
-	GetAll() []*pb.Consignment
+	Create(*shippy.Consignment) (*shippy.Consignment, error)
+	GetAll() []*shippy.Consignment
 }
 
 // Repository simulates the use of a datastore
 type Repository struct {
 	mu           sync.RWMutex
-	consignments []*pb.Consignment
+	consignments []*shippy.Consignment
 }
 
 // Create a new consignment
-func (repo *Repository) Create(consignment *pb.Consignment) (*pb.Consignment, error) {
+func (repo *Repository) Create(consignment *shippy.Consignment) (*shippy.Consignment, error) {
 	repo.mu.Lock()
 
 	updated := append(repo.consignments, consignment)
@@ -38,7 +33,7 @@ func (repo *Repository) Create(consignment *pb.Consignment) (*pb.Consignment, er
 }
 
 // GetAll consignments
-func (repo *Repository) GetAll() []*pb.Consignment {
+func (repo *Repository) GetAll() []*shippy.Consignment {
 	return repo.consignments
 }
 
@@ -49,39 +44,38 @@ type service struct {
 
 // CreateConsignment is our server method that takes a context and request
 // and creates a new consignment
-func (s *service) CreateConsignment(ctx context.Context, req *pb.Consignment) (*pb.Response, error) {
+func (s *service) CreateConsignment(ctx context.Context, req *shippy.Consignment, res *shippy.Response) error {
 
 	consignment, err := s.repo.Create(req)
 
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return &pb.Response{Created: true, Consignment: consignment}, nil
+	res.Created = true
+	res.Consignment = consignment
+
+	return nil
 }
 
-func (s *service) GetConsignments(ctx context.Context, req *pb.GetRequest) (*pb.Response, error) {
+func (s *service) GetConsignments(ctx context.Context, req *shippy.GetRequest, res *shippy.Response) error {
 	consignments := s.repo.GetAll()
-	return &pb.Response{Consignments: consignments}, nil
+	res.Consignments = consignments
+	return nil
 }
 
 func main() {
 
 	repo := &Repository{}
 
-	lis, err := net.Listen("tcp", port)
-	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
-	}
-	s := grpc.NewServer()
+	srv := grpc.NewService(
+		micro.Name("shippy.service.consignment"),
+	)
 
-	pb.RegisterShippingServiceServer(s, &service{repo})
+	srv.Init()
+	shippy.RegisterShippingServiceHandler(srv.Server(), &service{repo})
 
-	// Used to provide information about publicly-accessible gRPC services on a gRPC server
-	reflection.Register(s)
-
-	log.Println("Running on port:", port)
-	if err := s.Serve(lis); err != nil {
+	if err := srv.Run(); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
 }
