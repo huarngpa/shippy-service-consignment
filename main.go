@@ -5,6 +5,8 @@ import (
 	"log"
 	"sync"
 
+	"github.com/huarngpa/shippy-service-vessel/proto/vessel"
+
 	shippy "github.com/huarngpa/shippy-service-consignment/proto/consignment"
 	"github.com/micro/go-micro"
 	"github.com/micro/go-micro/service/grpc"
@@ -39,12 +41,29 @@ func (repo *Repository) GetAll() []*shippy.Consignment {
 
 // service implements all of the methods that satisfy consignment.proto
 type service struct {
-	repo repository
+	repo         repository
+	vesselClient vessel.VesselService
 }
 
 // CreateConsignment is our server method that takes a context and request
 // and creates a new consignment
 func (s *service) CreateConsignment(ctx context.Context, req *shippy.Consignment, res *shippy.Response) error {
+
+	vesselResponse, err := s.vesselClient.FindAvailable(
+		context.Background(),
+		&vessel.Specification{
+			MaxWeight: req.Weight,
+			Capacity:  int64(len(req.Containers)),
+		},
+	)
+
+	if err != nil {
+		return err
+	}
+
+	log.Printf("Found vessel: %s\n", vesselResponse.Vessel.Name)
+
+	req.VesselId = vesselResponse.Vessel.Id
 
 	consignment, err := s.repo.Create(req)
 
@@ -73,7 +92,10 @@ func main() {
 	)
 
 	srv.Init()
-	shippy.RegisterShippingServiceHandler(srv.Server(), &service{repo})
+
+	vesselClient := vessel.NewVesselService("shippy.service.vessel", srv.Client())
+
+	shippy.RegisterShippingServiceHandler(srv.Server(), &service{repo, vesselClient})
 
 	if err := srv.Run(); err != nil {
 		log.Fatalf("failed to serve: %v", err)
